@@ -10,144 +10,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from common import dearrow_title, format_duration, parse_title
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 from ytmusicapi import YTMusic
-
-yt_title_regexes = [
-	# Artist "Track", Artist: "Track", Artist - "Track", etc.
-	{
-		"pattern": r'(.+?)([\s:—-])+\s*"(.+?)"',
-		"groups": {"artist": 1, "track": 3},
-	},
-	# Artist「Track」 (Japanese tracks)
-	{
-		"pattern": r"(.+?)[『｢「](.+?)[」｣』]",
-		"groups": {"artist": 1, "track": 2},
-	},
-	# Track (... by Artist)
-	{
-		"pattern": r"(\w[\s\w]*?)\s+\([^)]*\s*by\s*([^)]+)+\)",
-		"groups": {"artist": 2, "track": 1},
-	},
-]
-
-separator_regex = "|".join(
-	re.escape(x)
-	for x in [
-		" -- ",
-		"--",
-		" ~ ",
-		" \u002d ",
-		" \u2013 ",
-		" \u2014 ",
-		" // ",
-		"\u002d",
-		"\u2013",
-		"\u2014",
-		":",
-		"|",
-		"///",
-		"~",
-	]
-)
-
-
-def dearrow_title(video_id: str):
-	results = requests.get(
-		f"https://sponsor.ajay.app/api/branding/{hashlib.sha256(video_id.encode()).hexdigest()[:4]}"
-	).json()
-	try:
-		result = next(
-			result for video_id2, result in results.items() if video_id == video_id2
-		)
-		return re.sub(
-			r"(^|\s)>(\S)",
-			r"\1\2",
-			next(
-				title["title"]
-				for title in result["titles"]
-				if title["votes"] >= 0 or title["locked"]
-			),
-		)
-	except StopIteration:
-		return None
-
-
-def format_duration(seconds):
-	if not seconds:
-		return ""
-
-	seconds = int(seconds)
-	minutes, seconds = divmod(seconds, 60)
-	hours, minutes = divmod(minutes, 60)
-
-	return f"{hours:02}:{minutes:02}:{seconds:02}"
-
-
-def duration_to_timedelta(duration: str):
-	hours, minutes, seconds = map(int, duration.split(":"))
-	return timedelta(hours=hours, minutes=minutes, seconds=seconds)
-
-
-# https://github.com/web-scrobbler/web-scrobbler/blob/e8045868cfe70762ce8f826c930719df4939471d/src/core/content/util.ts#L859
-def parse_title(channel: str, title: str):
-	print(f"\x1b[0;33mparsing {title}\x1b[0m")
-
-	# Remove [genre] or 【genre】 from the beginning of the title
-	title = re.sub(
-		r"^((\[[^\]]+\])|(【[^】]+】))\s*-*\s*", "", title, flags=re.IGNORECASE
-	)
-
-	# Remove track (CD and vinyl) numbers from the beginning of the title
-	title = re.sub(
-		r"^\s*([a-zA-Z]{1,2}|[0-9]{1,2})[1-9]?\.\s+", "", title, flags=re.IGNORECASE
-	)
-
-	# Remove - preceding opening bracket
-	title = re.sub(r"-\s*([「【『])", r"\1", title, flags=re.IGNORECASE)
-
-	# 【/(*Music Video/MV/PV*】/)
-	title = re.sub(
-		r"[(［【][^(［【]*?((Music Video)|(MV)|(PV)).*?[】］)]",
-		"",
-		title,
-		flags=re.IGNORECASE,
-	)
-
-	# 【/(東方/オリジナル*】/)
-	title = re.sub(
-		"[(［【]((オリジナル)|(東方)).*?[】］)]+?", "", title, flags=re.IGNORECASE
-	)
-
-	# MV/PV if followed by an opening/closing bracket
-	title = re.sub(
-		r"((?:Music Video)|MV|PV)([「［【『』】］」])", r"\2", title, flags=re.IGNORECASE
-	)
-
-	# MV/PV if ending and with whitespace in front
-	title = re.sub(r"\s+(MV|PV)$", "", title, flags=re.IGNORECASE)
-
-	title = re.sub(r"[\(\[][^)\]]lyrics[)\]]", "", title, flags=re.IGNORECASE)
-
-	title = title.strip()
-
-	for regex in yt_title_regexes:
-		m = re.search(regex["pattern"], title)
-		if m is not None:
-			artist = m.group(regex["groups"]["artist"])
-			track = m.group(regex["groups"]["track"])
-			return (artist, track)
-
-	res = re.split(separator_regex, title)
-	if len(res) == 2:
-		return (res[0], res[1])
-
-	if (m := re.search(r"(.+?)【(.+?)】", title)) is not None:
-		return (m.group(2), m.group(1))
-
-	return (channel, title)
-
 
 results_cache = {}
 
@@ -231,17 +97,20 @@ def main():
 
 			timestamp = datetime.fromisoformat(entry["time"])
 			if prev_timestamp is not None:
-				timestamp_diff = timestamp - prev_timestamp
+				timestamp_diff = prev_timestamp - timestamp
 			else:
 				timestamp_diff = timedelta(days=9999)  # surely this is fine right
+			prev_timestamp = timestamp
 
 			video_id = parse_qs(urlparse(entry["titleUrl"]).query)["v"][0]
 
 			if video_id in results_cache:
 				artist, track, album, duration, _ = results_cache[video_id]
 				print(artist, "-", track)
-				if duration_to_timedelta(duration) < scrobble_percent * timestamp_diff:
+
+				if scrobble_percent * timedelta(seconds=duration) > timestamp_diff:
 					continue
+
 				writer.writerow([
 					artist,
 					album,
@@ -273,7 +142,7 @@ def main():
 
 							if "duration_seconds" not in search_result:
 								error(f"Error: {video_id} missing duration")
-								duration = ""
+								duration = 0
 							else:
 								duration = search_result["duration_seconds"]
 
@@ -307,6 +176,12 @@ def main():
 								ytdlp_result is not None
 								and ytdlp_result["id"] == video_id
 							):
+								if (
+									timedelta(seconds=int(duration))
+									< scrobble_percent * timestamp_diff
+								):
+									continue
+
 								write_result(
 									writer,
 									artists=ytdlp_result.get("artists", []),
@@ -337,6 +212,14 @@ def main():
 									channel = filmot_result[0][
 										"channelname"
 									].removesuffix(" - Topic")
+
+									duration = filmot_result[0]["duration"]
+									if (
+										timedelta(seconds=int(duration))
+										< scrobble_percent * timestamp_diff
+									):
+										continue
+
 									write_result(
 										writer,
 										artists=[channel],
@@ -344,7 +227,7 @@ def main():
 										album="",
 										is_ytm=False,
 										time=entry["time"],
-										duration=filmot_result[0]["duration"],
+										duration=duration,
 										video_id=video_id,
 									)
 									entry_count += 1
