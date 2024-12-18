@@ -99,6 +99,14 @@ def parse_title(channel: str, title: str):
 		flags=re.IGNORECASE,
 	)
 
+	# 【/(*Official * Video*】/)
+	title = re.sub(
+		r"[(［【][^(［【]*?Official .*Video.*?[】］)]",
+		"",
+		title,
+		flags=re.IGNORECASE,
+	)
+
 	# 【/(*lyrics/full*】/)
 	title = re.sub(
 		r"[(［【][^(［【]*?((lyrics)).*?[】］)]",
@@ -120,7 +128,13 @@ def parse_title(channel: str, title: str):
 	# MV/PV if ending and with whitespace in front
 	title = re.sub(r"\s+(MV|PV)$", "", title, flags=re.IGNORECASE)
 
+	# (lyrics)
 	title = re.sub(r"[\(\[][^)\]]lyrics[)\]]", "", title, flags=re.IGNORECASE)
+
+	# eg. TVアニメ「進撃の巨人」The Final Season Part 2ノンクレジットOP ｜
+	title = re.sub(
+		r"TVアニメ[「『][^」』]*[」』][^｜|／]*[｜|／]\s*", "", title, flags=re.IGNORECASE
+	)
 
 	title = title.strip()
 

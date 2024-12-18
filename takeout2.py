@@ -35,6 +35,21 @@ def write_result(writer, artists, title, album, time, duration, is_ytm, video_id
 			artists[0] if artists else "", dearrow_title(video_id) or title
 		)
 
+	if artist in {
+		"cpol",
+		"cpol_",
+		"Mafham",
+		"mrekk",
+		"NaPiii_",
+		"JappaDeKappa",
+		"Whitecat",
+		"Akatsuki",
+		"Hugofrost",
+		"4096",
+		"Honest Trailers",
+	}:  # manual blacklist :skull:
+		return
+
 	print(artist, "-", track)
 	results_cache[video_id] = [artist, track, album, duration, "parsed" if parsed else ""]
 	writer.writerow([
@@ -106,16 +121,14 @@ def main():
 
 			if video_id in results_cache:
 				cached_result = results_cache[video_id]
-				if cached_result is None:  # intentionally ignored
+				if cached_result is None:
 					continue
 				artist, track, album, duration, _ = cached_result
 
 				if scrobble_percent * timedelta(seconds=duration) > timestamp_diff:
-					print("skipped", artist, "-", track)
 					continue
-				else:
-					print("played", artist, "-", track)
 
+				print(artist, "-", track)
 				writer.writerow([
 					artist,
 					album,
@@ -125,120 +138,127 @@ def main():
 					format_duration(duration),
 				])
 				entry_count += 1
-			elif entry["header"] == "YouTube Music":
-				# only get regular yt history if they're already in the results_cache
+			else:
 				try:
 					# try ytm api
-					for search_result in ytmusic.search(f'"{video_id}"'):
+					found_result = False
+					for j, search_result in enumerate(ytmusic.search(f'"{video_id}"')):
 						if (
 							"videoId" in search_result
 							and search_result["videoId"] == video_id
 						):
-							artists = [
-								artist["name"] for artist in search_result["artists"]
-							]
-
-							album = (
-								search_result["album"]["name"]
-								if "album" in search_result
-								and search_result["album"] is not None
-								else ""
-							)
-
-							if "duration_seconds" not in search_result:
-								error(f"Error: {video_id} missing duration")
-								duration = 0
-							else:
-								duration = search_result["duration_seconds"]
-
-							is_ytm = (
-								search_result["videoType"] == "MUSIC_VIDEO_TYPE_ATV"
-								or search_result["videoType"] == "MUSIC_VIDEO_TYPE_OMV"
-							)
-
-							if (
-								timedelta(seconds=int(duration))
-								< scrobble_percent * timestamp_diff
-							):
-								continue
-
-							write_result(
-								writer,
-								artists=artists,
-								title=search_result["title"],
-								album=album,
-								time=entry["time"],
-								duration=duration,
-								is_ytm=is_ytm,
-								video_id=video_id,
-							)
-							entry_count += 1
+							if j != 0:
+								error(f"{video_id} {j}")
+							found_result = True
 							break
+					if found_result:
+						artists = [artist["name"] for artist in search_result["artists"]]
+
+						album = (
+							search_result["album"]["name"]
+							if "album" in search_result
+							and search_result["album"] is not None
+							else ""
+						)
+
+						if "duration_seconds" not in search_result:
+							error(f"Error: {video_id} missing duration")
+							duration = 0
+						else:
+							duration = search_result["duration_seconds"]
+
+						is_ytm = (
+							search_result["videoType"] == "MUSIC_VIDEO_TYPE_ATV"
+							or search_result["videoType"] == "MUSIC_VIDEO_TYPE_OMV"
+						)
+
+						if (
+							scrobble_percent * timedelta(seconds=duration)
+							> timestamp_diff
+						):
+							continue
+
+						if entry["header"] == "YouTube" and not is_ytm:
+							# only add regular yt history if they're youtube music videos
+							error(f"check {video_id}: {search_result["title"]}")
+
+						write_result(
+							writer,
+							artists=artists,
+							title=search_result["title"],
+							album=album,
+							time=entry["time"],
+							duration=duration,
+							is_ytm=is_ytm,
+							video_id=video_id,
+						)
+						entry_count += 1
 					else:  # fall back to yt-dlp
-						try:
-							ytdlp_result = ytdlp.extract_info(video_id)
-							if (
-								ytdlp_result is not None
-								and ytdlp_result["id"] == video_id
-							):
+						if entry["header"] == "YouTube Music":
+							try:
+								ytdlp_result = ytdlp.extract_info(video_id)
 								if (
-									timedelta(seconds=int(duration))
-									< scrobble_percent * timestamp_diff
+									ytdlp_result is not None
+									and ytdlp_result["id"] == video_id
 								):
-									continue
-
-								write_result(
-									writer,
-									artists=ytdlp_result.get("artists", []),
-									title=ytdlp_result["title"],
-									album=ytdlp_result.get("album", ""),
-									is_ytm="album" in ytdlp_result,
-									time=entry["time"],
-									duration=ytdlp_result["duration"],
-									video_id=video_id,
-								)
-								entry_count += 1
-							else:
-								error(f"Error: couldn't find {video_id}")
-						except DownloadError:
-							resp = requests.get(
-								"https://filmot.com/api/getvideos",
-								params={
-									"key": "md5paNgdbaeudounjp39",
-									"id": video_id,
-								},
-							)
-							found = False
-							if resp.ok:
-								filmot_result = resp.json()
-								if not filmot_result:
-									found = False
-								else:
-									channel = filmot_result[0][
-										"channelname"
-									].removesuffix(" - Topic")
-
-									duration = filmot_result[0]["duration"]
 									if (
-										timedelta(seconds=int(duration))
-										< scrobble_percent * timestamp_diff
+										scrobble_percent * timedelta(seconds=duration)
+										> timestamp_diff
 									):
 										continue
 
 									write_result(
 										writer,
-										artists=[channel],
-										title=filmot_result[0]["title"],
-										album="",
-										is_ytm=False,
+										artists=ytdlp_result.get("artists", []),
+										title=ytdlp_result["title"],
+										album=ytdlp_result.get("album", ""),
+										is_ytm="album" in ytdlp_result,
 										time=entry["time"],
-										duration=duration,
+										duration=ytdlp_result["duration"],
 										video_id=video_id,
 									)
 									entry_count += 1
+								else:
+									error(f"Error: couldn't find {video_id}")
+							except DownloadError:
+								resp = requests.get(
+									"https://filmot.com/api/getvideos",
+									params={
+										"key": "md5paNgdbaeudounjp39",
+										"id": video_id,
+									},
+								)
+								found = False
+								if resp.ok:
+									filmot_result = resp.json()
+									if not filmot_result:
+										found = False
+									else:
+										channel = filmot_result[0][
+											"channelname"
+										].removesuffix(" - Topic")
 
-							if not found:
-								error(f"Error: {video_id} is unavailable")
+										duration = filmot_result[0]["duration"]
+										if (
+											scrobble_percent * timedelta(seconds=duration)
+											> timestamp_diff
+										):
+											continue
+
+										write_result(
+											writer,
+											artists=[channel],
+											title=filmot_result[0]["title"],
+											album="",
+											is_ytm=False,
+											time=entry["time"],
+											duration=duration,
+											video_id=video_id,
+										)
+										entry_count += 1
+
+								if not found:
+									error(f"Error: {video_id} is unavailable")
 				except (Exception, KeyboardInterrupt):  # catch-all
 					print(video_id, i)
 					with open("results_cache.json", "w", encoding="utf-8") as f:
