@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import requests
-from common import dearrow_title, format_duration, parse_title
+from common import dearrow_title, format_duration, parse_title, parse_ytm
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 from ytmusicapi import YTMusic
@@ -21,14 +21,8 @@ results_cache = {}
 def write_result(writer, artists, title, album, time, duration, is_ytm, video_id):
 	if is_ytm:  # ytm video
 		parsed = False
-		if len(artists) >= 3:
-			artist = ", ".join(artists[:-1]) + " & " + artists[-1]
-		else:
-			artist = " & ".join(artists)
-		if title.count(" - ") == 1:
-			track = title.split(" - ")[1]
-		else:
-			track = title
+		artist, track = parse_ytm(artists, title)
+
 	else:  # regular yt video
 		parsed = True
 		artist, track = parse_title(

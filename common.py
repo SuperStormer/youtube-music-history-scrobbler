@@ -21,6 +21,7 @@ yt_title_regexes = [
 	},
 ]
 
+
 separator_regex = "|".join(
 	re.escape(x)
 	for x in [
@@ -153,3 +154,15 @@ def parse_title(channel: str, title: str):
 		return (m.group(2), m.group(1))
 
 	return (channel, title)
+
+
+def parse_ytm(artists, title):
+	if len(artists) >= 3:
+		artist = ", ".join(artists[:-1]) + " & " + artists[-1]
+	else:
+		artist = " & ".join(artists)
+	if title.count(" - ") == 1:
+		track = title.split(" - ")[1]
+	else:
+		track = title
+	return artist, track
